@@ -1,0 +1,9 @@
+[general]
+name=RiverNETWORK
+qgisMinimumVersion=3.16
+description=Плагин для работы с DEM и водными путями
+author=spbu
+email=st107749@student.spbu.ru
+version=1.0
+category=Прочее
+icon=icon.png
