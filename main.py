@@ -272,87 +272,115 @@ class CustomDEMPlugin:
         pointLayer = pointLayers[0]
 
 
-        # Начать редактирование слоя точек и создать точки максимальной высоты для каждой линии
-        pointLayer.startEditing()
-        for feature in layer.getFeatures():
-            # Создание точек на основании высотных данных
-            if feature['max_z'] != None:
-                if feature['start_x'] != None and feature['start_y'] != None and feature['start_z'] != None and feature['start_z'] == feature['max_z']:
-                    point = QgsPointXY(feature['start_x'], feature['start_y'])
-                    new_feature = QgsFeature()
-                    new_feature.setFields(fields)
-                    new_feature.setGeometry(QgsGeometry.fromPointXY(point))
-                    new_feature['x'] = feature['start_x']
-                    new_feature['y'] = feature['start_y']
-                    new_feature['z'] = feature['start_z']
-                    pointLayer.addFeature(new_feature)
 
-                elif feature['end_x'] != None and feature['end_y'] != None and feature['end_z'] != None and feature['end_z'] == feature['max_z']:
-                    point = QgsPointXY(feature['end_x'], feature['end_y'])
-                    new_feature = QgsFeature()
-                    new_feature.setFields(fields)
-                    new_feature.setGeometry(QgsGeometry.fromPointXY(point))
-                    new_feature['x'] = feature['end_x']
-                    new_feature['y'] = feature['end_y']
-                    new_feature['z'] = feature['end_z']
-                    pointLayer.addFeature(new_feature)
+        # Сначала собираем все конечные и начальные точки
+        start_points = set()
+        end_points = set()
+
+        for feature in layer.getFeatures():
+            start_x = feature['start_x']
+            start_y = feature['start_y']
+            end_x = feature['end_x']
+            end_y = feature['end_y']
+
+            if start_x is not None and start_y is not None:
+                start_points.add((start_x, start_y))
+
+            if end_x is not None and end_y is not None:
+                end_points.add((end_x, end_y))
+
+        pointLayer.startEditing()
+
+        for feature in layer.getFeatures():
+            if feature['max_z'] is not None:
+                start_x = feature['start_x']
+                start_y = feature['start_y']
+                start_z = feature['start_z']
+                end_x = feature['end_x']
+                end_y = feature['end_y']
+                end_z = feature['end_z']
+
+                # Проверка начальной точки
+                if start_x is not None and start_y is not None and start_z is not None:
+                    start_point = (start_x, start_y)
+                    if start_z == feature['max_z'] and start_point not in end_points:
+                        point = QgsPointXY(start_x, start_y)
+                        new_feature = QgsFeature()
+                        new_feature.setFields(fields)
+                        new_feature.setGeometry(QgsGeometry.fromPointXY(point))
+                        new_feature['x'] = start_x
+                        new_feature['y'] = start_y
+                        new_feature['z'] = start_z
+                        pointLayer.addFeature(new_feature)
+
+                # Проверка конечной точки
+                if end_x is not None and end_y is not None and end_z is not None:
+                    end_point = (end_x, end_y)
+                    if end_z == feature['max_z'] and end_point not in start_points:
+                        point = QgsPointXY(end_x, end_y)
+                        new_feature = QgsFeature()
+                        new_feature.setFields(fields)
+                        new_feature.setGeometry(QgsGeometry.fromPointXY(point))
+                        new_feature['x'] = end_x
+                        new_feature['y'] = end_y
+                        new_feature['z'] = end_z
+                        pointLayer.addFeature(new_feature)
+
         # Завершение редактирования и сохранение изменений
         pointLayer.commitChanges(True)
 
-        isolines = processing.run("gdal:contour",
-                                {'INPUT': reprojected_relief, 'BAND': 1, 'INTERVAL': 18, 'FIELD_NAME': 'ELEV',
-                                'CREATE_3D': False, 'IGNORE_NODATA': False, 'NODATA': None, 'OFFSET': 0, 'EXTRA': '',
-                                'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
-        isolines = processing.run("native:multiparttosingleparts", {'INPUT': isolines, 'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
-        QgsProject.instance().addMapLayer(isolines)
+        #isolines = processing.run("gdal:contour",
+                                #{'INPUT': reprojected_relief, 'BAND': 1, 'INTERVAL': 18, 'FIELD_NAME': 'ELEV',
+                                #'CREATE_3D': False, 'IGNORE_NODATA': False, 'NODATA': None, 'OFFSET': 0, 'EXTRA': '',
+                                #'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+        #isolines = processing.run("native:multiparttosingleparts", {'INPUT': isolines, 'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
+        #QgsProject.instance().addMapLayer(isolines)
 
 
+        ##БЛИЖАЙШИЕ ИЗОЛИНИИ:
+        #point_layer = QgsProject.instance().mapLayersByName('MaxHeightPoints')[0]
+        #contour_layer = QgsProject.instance().mapLayersByName('Single parts')[0]
 
+        ## Создание нового слоя для ближайших изолиний
+        #crs = contour_layer.crs().toWkt()
+        #new_layer = QgsVectorLayer(f"LineString?crs={crs}", "Ближайшие изолинии", "memory")
+        #new_layer.dataProvider().addAttributes(contour_layer.fields())
+        #new_layer.updateFields()
 
-        #БЛИЖАЙШИЕ ИЗОЛИНИИ:
-        point_layer = QgsProject.instance().mapLayersByName('MaxHeightPoints')[0]
-        contour_layer = QgsProject.instance().mapLayersByName('Single parts')[0]
+        ## Индекс поля ELEV в слое изолиний
+        #elev_index = contour_layer.fields().indexOf('ELEV')
+        #z_index = point_layer.fields().indexOf('z')
 
-        # Создание нового слоя для ближайших изолиний
-        crs = contour_layer.crs().toWkt()
-        new_layer = QgsVectorLayer(f"LineString?crs={crs}", "Ближайшие изолинии", "memory")
-        new_layer.dataProvider().addAttributes(contour_layer.fields())
-        new_layer.updateFields()
+        ## Множество для хранения ID ближайших изолиний
+        #nearest_isoline_ids = set()
 
-        # Индекс поля ELEV в слое изолиний
-        elev_index = contour_layer.fields().indexOf('ELEV')
-        z_index = point_layer.fields().indexOf('z')
+        ## Поиск ближайших изолиний
+        #for point_feature in point_layer.getFeatures():
+            #point_z = point_feature['z']
 
-        # Множество для хранения ID ближайших изолиний
-        nearest_isoline_ids = set()
-
-        # Поиск ближайших изолиний
-        for point_feature in point_layer.getFeatures():
-            point_z = point_feature['z']
-
-            min_difference = float('inf')
-            nearest_isoline_id = None
+            #min_difference = float('inf')
+            #nearest_isoline_id = None
             
-            for contour_feature in contour_layer.getFeatures():
-                contour_elev = contour_feature['ELEV']
-                difference = abs(point_z - contour_elev)
+            #for contour_feature in contour_layer.getFeatures():
+                #contour_elev = contour_feature['ELEV']
+                #difference = abs(point_z - contour_elev)
 
-                if difference < min_difference:
-                    min_difference = difference
-                    nearest_isoline_id = contour_feature.id()
+                #if difference < min_difference:
+                    #min_difference = difference
+                    #nearest_isoline_id = contour_feature.id()
 
-            if nearest_isoline_id is not None:
-                nearest_isoline_ids.add(nearest_isoline_id)
+            #if nearest_isoline_id is not None:
+                #nearest_isoline_ids.add(nearest_isoline_id)
 
-        # Добавление ближайших изолиний в новый слой
-        new_layer.startEditing()
-        for contour_feature in contour_layer.getFeatures():
-            if contour_feature.id() in nearest_isoline_ids:
-                new_feature = QgsFeature(contour_feature)
-                new_feature.setGeometry(QgsGeometry(contour_feature))
-                new_layer.addFeature(new_feature)
+        ## Добавление ближайших изолиний в новый слой
+        #new_layer.startEditing()
+        #for contour_feature in contour_layer.getFeatures():
+            #if contour_feature.id() in nearest_isoline_ids:
+                #new_feature = QgsFeature(contour_feature)
+                #new_feature.setGeometry(QgsGeometry(contour_feature))
+                #new_layer.addFeature(new_feature)
 
-        new_layer.commitChanges()
+        #new_layer.commitChanges()
 
-        # Добавление нового слоя в проект
-        QgsProject.instance().addMapLayer(new_layer)
+        ## Добавление нового слоя в проект
+        #QgsProject.instance().addMapLayer(new_layer)
