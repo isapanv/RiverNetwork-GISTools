@@ -1,27 +1,26 @@
-from qgis.core import QgsProject, QgsCoordinateReferenceSystem, QgsPointXY, QgsRasterLayer, QgsVectorLayer, QgsGeometry, \
-    QgsField
 from qgis.core import (
     QgsProject,
+    QgsCoordinateReferenceSystem,
+    QgsPointXY,
+    QgsRasterLayer,
+    QgsVectorLayer,
+    QgsGeometry,
+    QgsField,
     QgsSpatialIndex,
     QgsFeatureRequest,
-    QgsVectorLayer,
-    QgsGeometry
+    QgsRaster,
+    QgsFeature,
+    QgsApplication,
+    QgsPoint
 )
 from qgis.analysis import QgsNativeAlgorithms
 from processing_saga_nextgen.saga_nextgen_plugin import SagaNextGenAlgorithmProvider
-from qgis.PyQt.QtCore import QVariant
+from qgis.PyQt.QtCore import QVariant, QCoreApplication
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QInputDialog, QMessageBox
 import requests
 import os
 from pyproj import Transformer
 import processing
-from qgis.PyQt.QtCore import QCoreApplication
-from qgis.core import QgsProject, QgsRasterLayer, QgsCoordinateReferenceSystem, QgsApplication, QgsPointXY
-import requests
-import processing
-from pyproj import Transformer
-from qgis.core import QgsRasterLayer, QgsProject, QgsCoordinateReferenceSystem
-from qgis.core import QgsRaster
-from qgis.core import QgsFeature, QgsGeometry, QgsPoint, QgsField
 
 
 class CustomDEMPlugin:
@@ -47,20 +46,19 @@ class CustomDEMPlugin:
     def run_plugin(self):
         #Код плагина
 
-        #Папка для проекта
-        plugin_folder = os.path.dirname(os.path.abspath(__file__))
-        project_folder = os.path.join(plugin_folder, "tmp_files")
 
+        project_folder = QFileDialog.getExistingDirectory(
+            None, "Выберите рабочую папку"
+        )
+        if not project_folder:
+            QMessageBox.warning(None, "Ошибка", "Рабочая папка не выбрана. Работа плагина прекращена.")
+            return
+
+        # Создать папку "work" внутри выбранной папки
+        project_folder = os.path.join(project_folder, "work")
         if not os.path.exists(project_folder):
             os.makedirs(project_folder)
-
-        project_folder = os.path.join(project_folder, "woek")
-
-        if not os.path.exists(project_folder):
-            os.makedirs(project_folder)
-
-        # Папка для проекта
-        #project_folder = '/home/musoroprovod/'
+        QMessageBox.information(None, "Папка установлена", f"Рабочая папка: {project_folder}")
 
         # Установить систему координат проекта (EPSG:3857 - Pseudo-Mercator)
         crs = QgsCoordinateReferenceSystem("EPSG:3857")
@@ -74,8 +72,21 @@ class CustomDEMPlugin:
         opentopo_layer = QgsRasterLayer(opentopo_url, 'OpenTopoMap', 'wms')
         QgsProject.instance().addMapLayer(opentopo_layer)
 
+
+        x, ok_x = QInputDialog.getDouble(None, "Координата X", "Введите координату X:", value=4316873, decimals=6)
+        if not ok_x:
+            QMessageBox.warning(None, "Ошибка", "Неприавильная координата X. Работа плагина прекращена.")
+            return
+        y, ok_y = QInputDialog.getDouble(None, "Координата Y", "Введите координату Y:", value=7711643, decimals=6)
+        if not ok_y:
+            QMessageBox.warning(None, "Ошибка", "Неприавильная координата Y. Работа плагина прекращена.")
+            return
+        x_3857, y_3857 = x, y
+        QMessageBox.information(None, "Координаты установлены", f"X: {x_3857}, Y: {y_3857}")
+
+
         # Координаты озера в системе координат EPSG:3857
-        x_3857, y_3857 = 4316873, 7711643
+        #x_3857, y_3857 = 4316873, 7711643
 
         # Преобразовать координаты в широту и долготу (EPSG:4326)
         transformer = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
