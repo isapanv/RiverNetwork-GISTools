@@ -11,8 +11,10 @@ from qgis.core import (
     QgsRaster,
     QgsFeature,
     QgsApplication,
-    QgsPoint
+    QgsPoint,
+    QgsVectorLayer,
 )
+
 from qgis.analysis import QgsNativeAlgorithms
 from processing_saga_nextgen.saga_nextgen_plugin import SagaNextGenAlgorithmProvider
 from qgis.PyQt.QtCore import QVariant, QCoreApplication
@@ -21,6 +23,9 @@ import requests
 import os
 from pyproj import Transformer
 import processing
+from itertools import combinations
+import random
+from qgis.analysis import QgsZonalStatistics
 
 
 class CustomDEMPlugin:
@@ -30,7 +35,7 @@ class CustomDEMPlugin:
         self.plugin_name = "RiverNETWORK"
 
     def initGui(self):
-        #Для запуска плагина
+        # Для запуска плагина
         from qgis.PyQt.QtWidgets import QAction
         self.action = QAction(self.plugin_name, self.iface.mainWindow())
         self.action.triggered.connect(self.run_plugin)
@@ -38,15 +43,12 @@ class CustomDEMPlugin:
         self.iface.addPluginToMenu("&RiverNETWORK", self.action)
 
     def unload(self):
-        #Удаление плагина
+        # Удаление плагина
         self.iface.removeToolBarIcon(self.action)
         self.iface.removePluginMenu("&RiverNETWORK", self.action)
 
-
     def run_plugin(self):
-        #Код плагина
-
-
+        # Код плагина
         project_folder = QFileDialog.getExistingDirectory(
             None, "Выберите рабочую папку"
         )
@@ -72,7 +74,6 @@ class CustomDEMPlugin:
         opentopo_layer = QgsRasterLayer(opentopo_url, 'OpenTopoMap', 'wms')
         QgsProject.instance().addMapLayer(opentopo_layer)
 
-
         x, ok_x = QInputDialog.getDouble(None, "Координата X", "Введите координату X:", value=4316873, decimals=6)
         if not ok_x:
             QMessageBox.warning(None, "Ошибка", "Неприавильная координата X. Работа плагина прекращена.")
@@ -84,9 +85,8 @@ class CustomDEMPlugin:
         x_3857, y_3857 = x, y
         QMessageBox.information(None, "Координаты установлены", f"X: {x_3857}, Y: {y_3857}")
 
-
         # Координаты озера в системе координат EPSG:3857
-        #x_3857, y_3857 = 4316873, 7711643
+        # x_3857, y_3857 = 4316873, 7711643
 
         # Преобразовать координаты в широту и долготу (EPSG:4326)
         transformer = Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
@@ -166,8 +166,7 @@ class CustomDEMPlugin:
         merge_result = processing.run("qgis:mergevectorlayers", {
             'LAYERS': [layer1, layer2], 'CRS': layer1.crs(),
             'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
-        merge_result = processing.run("native:dissolve",
-                                {'INPUT': merge_result, 'FIELD': [], 'SEPARATE_DISJOINT': False, 'OUTPUT': 'TEMPORARY_OUTPUT'})[
+        merge_result = processing.run("native:dissolve", {'INPUT': merge_result, 'FIELD': [], 'SEPARATE_DISJOINT': False, 'OUTPUT': 'TEMPORARY_OUTPUT'})[
             'OUTPUT']
         merge_result = processing.run("native:multiparttosingleparts", {'INPUT': merge_result, 'OUTPUT': f'{project_folder}merge_result.gpkg'})['OUTPUT']
 
@@ -271,8 +270,6 @@ class CustomDEMPlugin:
         pointLayers = QgsProject.instance().mapLayersByName(point_layer_name)
         pointLayer = pointLayers[0]
 
-
-
         # Сначала собираем все конечные и начальные точки
         start_points = set()
         end_points = set()
@@ -329,58 +326,135 @@ class CustomDEMPlugin:
         # Завершение редактирования и сохранение изменений
         pointLayer.commitChanges(True)
 
-        #isolines = processing.run("gdal:contour",
-                                #{'INPUT': reprojected_relief, 'BAND': 1, 'INTERVAL': 18, 'FIELD_NAME': 'ELEV',
-                                #'CREATE_3D': False, 'IGNORE_NODATA': False, 'NODATA': None, 'OFFSET': 0, 'EXTRA': '',
-                                #'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
-        #isolines = processing.run("native:multiparttosingleparts", {'INPUT': isolines, 'OUTPUT': 'TEMPORARY_OUTPUT'})['OUTPUT']
-        #QgsProject.instance().addMapLayer(isolines)
+
+# Загрузка слоя точек и слоя стоимости
+points_layer = QgsProject.instance().mapLayersByName('MaxHeightPoints')[0]
+cost_layer = QgsProject.instance().mapLayersByName('Slope Layer')[0]
+
+# Выбираем две случайные точки
+# start_feature, end_feature = random.sample(valid_features, 2)
+
+start_point = 'dot'
+start_layer = QgsProject.instance().mapLayersByName(f'{start_point}')[0]
+# end_layer = create_temp_point_layer(end_feature.geometry(), points_layer.crs())
+
+params = {
+    'INPUT_COST_RASTER': cost_layer,
+    'INPUT_RASTER_BAND': 1,
+    'INPUT_START_LAYER': start_layer,
+    'INPUT_END_LAYER': points_layer,
+    'BOOLEAN_FIND_LEAST_PATH_TO_ALL_ENDS': False,
+    'BOOLEAN_OUTPUT_LINEAR_REFERENCE': False,
+    'OUTPUT': 'TEMPORARY_OUTPUT'
+}
+
+# Запуск алгоритма Least-Cost Path
+try:
+    result = processing.run("Cost distance analysis:Least Cost Path", params)
+    path_layer = result['OUTPUT']
+
+    # Добавляем слой с результатом в проект
+    QgsProject.instance().addMapLayer(path_layer)
+except Exception as e:
+    print(f"Ошибка при выполнении Least-Cost Path: {e}")
+
+# удаление путей, с перепадом высот
+paths_layer = QgsProject.instance().mapLayersByName('Output least cost path')[0]
+elevation_layer = QgsProject.instance().mapLayersByName('SRTM DEM Layer')[0]
 
 
-        ##БЛИЖАЙШИЕ ИЗОЛИНИИ:
-        #point_layer = QgsProject.instance().mapLayersByName('MaxHeightPoints')[0]
-        #contour_layer = QgsProject.instance().mapLayersByName('Single parts')[0]
+def calculate_minimum_elevation(raster_layer, line_geom):
+    provider = raster_layer.dataProvider()
+    min_elevation = float('inf')
 
-        ## Создание нового слоя для ближайших изолиний
-        #crs = contour_layer.crs().toWkt()
-        #new_layer = QgsVectorLayer(f"LineString?crs={crs}", "Ближайшие изолинии", "memory")
-        #new_layer.dataProvider().addAttributes(contour_layer.fields())
-        #new_layer.updateFields()
+    if line_geom.isMultipart():
+        lines = line_geom.asMultiPolyline()
+    else:
+        lines = [line_geom.asPolyline()]
 
-        ## Индекс поля ELEV в слое изолиний
-        #elev_index = contour_layer.fields().indexOf('ELEV')
-        #z_index = point_layer.fields().indexOf('z')
+    for line in lines:
+        for point in line:
+            value, result = provider.sample(QgsPointXY(point.x(), point.y()), 1)  # 1 — это идентификатор первой бандовой
+            if result and value is not None:
+                min_elevation = min(min_elevation, value)
 
-        ## Множество для хранения ID ближайших изолиний
-        #nearest_isoline_ids = set()
+    return min_elevation if min_elevation != float('inf') else None
 
-        ## Поиск ближайших изолиний
-        #for point_feature in point_layer.getFeatures():
-            #point_z = point_feature['z']
 
-            #min_difference = float('inf')
-            #nearest_isoline_id = None
-            
-            #for contour_feature in contour_layer.getFeatures():
-                #contour_elev = contour_feature['ELEV']
-                #difference = abs(point_z - contour_elev)
+paths_to_delete = []
 
-                #if difference < min_difference:
-                    #min_difference = difference
-                    #nearest_isoline_id = contour_feature.id()
+for path_feature in paths_layer.getFeatures():
+    path_geom = path_feature.geometry()
 
-            #if nearest_isoline_id is not None:
-                #nearest_isoline_ids.add(nearest_isoline_id)
+    min_elevation = calculate_minimum_elevation(elevation_layer, path_geom)
 
-        ## Добавление ближайших изолиний в новый слой
-        #new_layer.startEditing()
-        #for contour_feature in contour_layer.getFeatures():
-            #if contour_feature.id() in nearest_isoline_ids:
-                #new_feature = QgsFeature(contour_feature)
-                #new_feature.setGeometry(QgsGeometry(contour_feature))
-                #new_layer.addFeature(new_feature)
+    if min_elevation is None:
+        continue
 
-        #new_layer.commitChanges()
+    if path_geom.isMultipart():
+        first_point = path_geom.asMultiPolyline()[0][0]
+        last_point = path_geom.asMultiPolyline()[-1][-1]
+    else:
+        first_point = path_geom.asPolyline()[0]
+        last_point = path_geom.asPolyline()[-1]
 
-        ## Добавление нового слоя в проект
-        #QgsProject.instance().addMapLayer(new_layer)
+    start_point = QgsPointXY(first_point.x(), first_point.y())
+    end_point = QgsPointXY(last_point.x(), last_point.y())
+
+    provider = elevation_layer.dataProvider()
+    z_start, result_start = provider.sample(start_point, 1)
+    z_end, result_end = provider.sample(end_point, 1)
+
+    if not result_start or not result_end:
+        continue
+
+    z1 = min(z_start, z_end)
+
+    if min_elevation < z1 - 15:
+        paths_to_delete.append(path_feature.id())
+
+if paths_to_delete:
+    paths_layer.startEditing()
+    for path_id in paths_to_delete:
+        paths_layer.deleteFeature(path_id)
+    paths_layer.commitChanges()
+
+print(f"Удалено {len(paths_to_delete)} путей, не соответствующих критериям.")
+
+# удаление путей, пересекаюжих реки
+paths_layer = QgsProject.instance().mapLayersByName('Output least cost path')[0]
+lines_layer = QgsProject.instance().mapLayersByName('rivers_and_points')[0]
+
+line_index = QgsSpatialIndex(lines_layer.getFeatures())
+
+paths_to_delete = []
+
+for path_feature in paths_layer.getFeatures():
+    path_geom = path_feature.geometry()
+    path_points = path_geom.asPolyline()
+
+    start_point = QgsGeometry.fromPointXY(path_points[0])
+    end_point = QgsGeometry.fromPointXY(path_points[-1])
+
+    candidate_ids = line_index.intersects(path_geom.boundingBox())
+
+    for candidate_id in candidate_ids:
+        line_feature = lines_layer.getFeature(candidate_id)
+        line_geom = line_feature.geometry()
+
+        if path_geom.intersects(line_geom):
+            if (
+                start_point.intersects(line_geom) or
+                end_point.intersects(line_geom)
+            ):
+                continue
+            paths_to_delete.append(path_feature.id())
+            break
+
+if paths_to_delete:
+    paths_layer.startEditing()
+    for path_id in paths_to_delete:
+        paths_layer.deleteFeature(path_id)
+    paths_layer.commitChanges()
+
+print(f"Удалено {len(paths_to_delete)} пересекающихся путей (исключая общие начала/концы).")
